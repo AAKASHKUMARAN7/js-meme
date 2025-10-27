@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mems Lab — Meme Studio (Text Input + Drag)</title>
+<style>
+  body{margin:0;font-family:sans-serif;background:#0f1724;color:#e6eef6;min-height:100vh;padding:20px;}
+  h1{margin:0 0 6px 0;font-size:24px;color:#06b6d4;}
+  .lead{color:#9aa7b2;font-size:14px;margin-bottom:20px;}
+  .container{display:flex;flex-wrap:wrap;gap:20px;}
+  .card{background:#0b1220;padding:14px;border-radius:12px;flex:1;min-width:320px;box-shadow:0 6px 18px rgba(0,0,0,0.5);}
+  .templates{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;}
+  .template{width:80px;height:80px;overflow:hidden;border:2px solid transparent;border-radius:10px;cursor:pointer;}
+  .template img{width:100%;height:100%;object-fit:cover;}
+  .template.selected{border-color:#06b6d4;}
+  input,button{padding:8px;border-radius:8px;border:none;margin-top:6px;width:100%;}
+  button{background:#06b6d4;color:#042022;font-weight:600;cursor:pointer;}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:#9aa7b2;}
+  canvas{width:100%;border-radius:12px;background:#111;margin-top:10px;}
+  .saved{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;}
+  .saved .m{width:140px;background:#07121a;padding:8px;border-radius:10px;}
+  .saved img{width:100%;height:90px;object-fit:cover;border-radius:6px;}
+  .saved .meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;}
+  .small{font-size:12px;color:#9aa7b2;}
+  .memeArea{position:relative;}
+  .draggableText{
+    position:absolute;
+    color:#fff;
+    font-size:40px;
+    font-family:Impact, Arial Black, sans-serif;
+    cursor:move;
+    text-shadow:2px 2px 0 #000,-2px 2px 0 #000,2px -2px 0 #000,-2px -2px 0 #000;
+  }
+</style>
+</head>
+<body>
+
+<h1>Meme Studio</h1>
+
+<div class="container">
+  <!-- LEFT CONTROL PANEL -->
+  <div class="card">
+    <strong>Templates</strong>
+    <div class="templates" id="templates"></div>
+    <input type="url" id="tplUrl" placeholder="Add template by URL">
+    <button id="addTpl">Add Template</button>
+    <input type="file" id="tplFile" accept="image/*">
+
+    <hr style="margin:10px 0;border-color:#222;">
+    <strong>Add Caption</strong>
+    <input type="text" id="captionInput" placeholder="Type your text here">
+    <label>Font Size</label>
+    <input type="range" id="fontSize" min="18" max="100" value="40">
+    <label>Text Color</label>
+    <input type="color" id="txtColor" value="#ffffff">
+    <label>Outline Thickness</label>
+    <input type="range" id="stroke" min="0" max="8" value="3">
+    <button id="addTextBtn">Add Text to Meme</button>
+
+    <hr style="margin:10px 0;border-color:#222;">
+    <button id="create">Create Meme</button>
+    <button id="update" class="ghost" style="display:none;">Update Meme</button>
+    <button id="download" class="ghost">Download</button>
+
+    <div class="saved" id="saved"></div>
+  </div>
+
+  <!-- RIGHT PREVIEW AREA -->
+  <div class="card memeArea">
+    <strong>Preview</strong>
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <div id="editorArea"></div>
+    <div class="small">Drag your added text anywhere on the meme image.</div>
+  </div>
+</div>
+
+<script>
+const templatesEl=document.getElementById('templates');
+const tplUrl=document.getElementById('tplUrl');
+const addTpl=document.getElementById('addTpl');
+const tplFile=document.getElementById('tplFile');
+const captionInput=document.getElementById('captionInput');
+const addTextBtn=document.getElementById('addTextBtn');
+const fontSize=document.getElementById('fontSize');
+const txtColor=document.getElementById('txtColor');
+const stroke=document.getElementById('stroke');
+const createBtn=document.getElementById('create');
+const updateBtn=document.getElementById('update');
+const downloadBtn=document.getElementById('download');
+const savedEl=document.getElementById('saved');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const editorArea=document.getElementById('editorArea');
+
+let templates=[],saved=[],selectedTemplate=null,editingId=null,texts=[];
+const seed=[
+  'https://i.imgflip.com/30b1gx.jpg',
+  'https://i.imgflip.com/1ur9b0.jpg',
+  'https://i.imgflip.com/1otk96.jpg',
+  'https://i.imgflip.com/26jxvz.jpg'
+];
+
+function uid(){return 'm'+Math.random().toString(36).slice(2,9);}
+function loadLocal(){
+  templates=JSON.parse(localStorage.getItem('mems_lab_templates')||'null')||seed.slice();
+  saved=JSON.parse(localStorage.getItem('mems_lab_saved')||'null')||[];
+}
+function saveLocal(){
+  localStorage.setItem('mems_lab_templates',JSON.stringify(templates));
+  localStorage.setItem('mems_lab_saved',JSON.stringify(saved));
+}
+function renderTemplates(){
+  templatesEl.innerHTML='';
+  templates.forEach(src=>{
+    const div=document.createElement('div');
+    div.className='template';div.dataset.src=src;
+    const img=document.createElement('img');img.src=src;div.appendChild(img);
+    div.addEventListener('click',()=>{
+      document.querySelectorAll('.template').forEach(t=>t.classList.remove('selected'));
+      div.classList.add('selected');selectedTemplate=src;draw();
+    });
+    templatesEl.appendChild(div);
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!selectedTemplate){
+    ctx.fillStyle='#071722';ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#9aa7b2';ctx.font='16px sans-serif';
+    ctx.fillText('Select a template',20,40);
+    return;
+  }
+  const img=new Image();img.crossOrigin='anonymous';img.src=selectedTemplate;
+  img.onload=()=>{
+    const ratio=Math.min(canvas.width/img.width,canvas.height/img.height);
+    const w=img.width*ratio,h=img.height*ratio,x=(canvas.width-w)/2,y=(canvas.height-h)/2;
+    ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,x,y,w,h);
+    // Draw all text items
+    texts.forEach(t=>{
+      ctx.font=`bold ${t.size}px Impact, Arial`;
+      ctx.fillStyle=t.color;
+      ctx.strokeStyle='black';
+      ctx.lineWidth=Math.max(1,parseInt(t.stroke));
+      ctx.textAlign='left';
+      ctx.strokeText(t.text,t.x,t.y);
+      ctx.fillText(t.text,t.x,t.y);
+    });
+  }
+}
+
+// Add new draggable text
+addTextBtn.addEventListener('click',()=>{
+  const val=captionInput.value.trim();
+  if(!val)return alert("Please type something first!");
+  const div=document.createElement('div');
+  div.className='draggableText';
+  div.textContent=val;
+  div.style.left='100px';div.style.top='100px';
+  div.style.color=txtColor.value;
+  div.style.fontSize=fontSize.value+'px';
+  div.dataset.size=fontSize.value;
+  div.dataset.color=txtColor.value;
+  div.dataset.stroke=stroke.value;
+  editorArea.appendChild(div);
+  makeDraggable(div);
+  captionInput.value='';
+});
+
+function makeDraggable(el){
+  let dragging=false,offsetX=0,offsetY=0;
+  el.addEventListener('mousedown',e=>{
+    dragging=true;
+    const rect=el.getBoundingClientRect();
+    offsetX=e.clientX-rect.left;
+    offsetY=e.clientY-rect.top;
+  });
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const parentRect=canvas.getBoundingClientRect();
+    el.style.left=(e.clientX-offsetX-parentRect.left)+'px';
+    el.style.top=(e.clientY-offsetY-parentRect.top)+'px';
+  });
+  window.addEventListener('mouseup',()=>dragging=false);
+}
+
+// Capture meme with texts drawn
+function captureMeme(){
+  // Gather current text positions
+  const rectCanvas=canvas.getBoundingClientRect();
+  texts=[];
+  document.querySelectorAll('.draggableText').forEach(el=>{
+    const rect=el.getBoundingClientRect();
+    texts.push({
+      text:el.textContent,
+      x:rect.left-rectCanvas.left,
+      y:rect.top-rectCanvas.top+parseInt(el.style.fontSize),
+      color:el.dataset.color,
+      size:parseInt(el.dataset.size),
+      stroke:el.dataset.stroke
+    });
+  });
+  draw();
+  return canvas.toDataURL('image/png');
+}
+
+createBtn.addEventListener('click',()=>{
+  if(!selectedTemplate){alert('Select template first');return;}
+  const data=captureMeme();
+  const obj={id:uid(),template:selectedTemplate,dataUrl:data,texts:texts};
+  saved.unshift(obj);saveLocal();renderSaved();
+  createBtn.textContent='Saved!';setTimeout(()=>createBtn.textContent='Create Meme',900);
+});
+
+downloadBtn.addEventListener('click',()=>{
+  const a=document.createElement('a');
+  a.href=captureMeme();a.download='meme.png';a.click();
+});
+
+addTpl.addEventListener('click',()=>{
+  const url=tplUrl.value.trim();if(!url)return;
+  templates.unshift(url);saveLocal();renderTemplates();
+  tplUrl.value='';selectedTemplate=url;draw();
+});
+tplFile.addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    templates.unshift(ev.target.result);
+    saveLocal();renderTemplates();selectedTemplate=ev.target.result;draw();
+  };
+  r.readAsDataURL(f);
+});
+
+function renderSaved(){
+  savedEl.innerHTML='';
+  saved.forEach(s=>{
+    const div=document.createElement('div');div.className='m';
+    const img=document.createElement('img');img.src=s.dataUrl;div.appendChild(img);
+    const meta=document.createElement('div');meta.className='meta';
+    const idspan=document.createElement('span');idspan.className='small';idspan.textContent=s.id;
+    const btns=document.createElement('div');btns.style.display='flex';btns.style.gap='6px';
+    const edit=document.createElement('button');edit.textContent='Edit';edit.style.padding='6px';
+    edit.addEventListener('click',()=>loadForEdit(s.id));
+    const del=document.createElement('button');del.textContent='Del';del.className='ghost';del.style.padding='6px';
+    del.addEventListener('click',()=>{if(confirm('Delete?')){saved=saved.filter(x=>x.id!==s.id);saveLocal();renderSaved();}});
+    btns.appendChild(edit);btns.appendChild(del);
+    meta.appendChild(idspan);meta.appendChild(btns);div.appendChild(meta);
+    savedEl.appendChild(div);
+  });
+}
+
+function loadForEdit(id){
+  const m=saved.find(x=>x.id===id);if(!m)return;
+  selectedTemplate=m.template;
+  if(!templates.includes(m.template))templates.unshift(m.template);
+  saveLocal();renderTemplates();
+  document.querySelectorAll('.template').forEach(t=>{
+    if(t.dataset.src===selectedTemplate)t.classList.add('selected');else t.classList.remove('selected');
+  });
+  editorArea.innerHTML='';
+  m.texts.forEach(t=>{
+    const div=document.createElement('div');
+    div.className='draggableText';
+    div.textContent=t.text;
+    div.style.left=t.x+'px';
+    div.style.top=(t.y-parseInt(t.size))+'px';
+    div.style.color=t.color;
+    div.style.fontSize=t.size+'px';
+    div.dataset.size=t.size;
+    div.dataset.color=t.color;
+    div.dataset.stroke=t.stroke;
+    editorArea.appendChild(div);
+    makeDraggable(div);
+  });
+  editingId=id;
+  createBtn.style.display='none';
+  updateBtn.style.display='inline-block';
+  draw();
+}
+
+updateBtn.addEventListener('click',()=>{
+  if(!editingId)return;
+  const data=captureMeme();
+  const idx=saved.findIndex(x=>x.id===editingId);
+  if(idx>=0){
+    saved[idx].dataUrl=data;
+    saved[idx].texts=texts;
+    saveLocal();renderSaved();
+  }
+  editingId=null;
+  updateBtn.style.display='none';
+  createBtn.style.display='inline-block';
+});
+
+loadLocal();renderTemplates();renderSaved();
+if(templates.length){selectedTemplate=templates[0];document.querySelectorAll('.template')[0]?.classList.add('selected');}
+draw();
+</script>
+
+</body>
+</html>
